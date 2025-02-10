@@ -2,3 +2,6 @@
 __pycache__/
 firebase.json
 .venv
+google-oauth2.json
+config.py
+temp/*

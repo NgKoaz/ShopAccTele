@@ -1,2 +1,0 @@
-class SePay:
-    pass
