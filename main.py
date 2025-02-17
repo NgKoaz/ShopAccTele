@@ -6,7 +6,4 @@ from bot.bot import Bot
 
 
 load_dotenv()
-Container.db().get_categories()
 bot = Bot(token=os.getenv("TOKEN"))
-
-

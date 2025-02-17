@@ -1,80 +1,77 @@
 from telegram.ext import *
 from telegram import *
 import logging
-import numpy as np
-import asyncio
-from services.payos_payment import PayOsPayment
-from services.database import Database
-from services.cloud_storage import CloudStorage
 from services.container import Container
-from models.product import Product
-from states.bot_states import BotStates
 import handlers.start as start_handlers
 import handlers.purchase as purchase_handlers
 import handlers.deposit as deposit_handlers
-import handlers.admin as admin_handlers
-from config import Config
+from handlers.admin_handlers.category import add_category_conversation_handler
+from handlers.admin_handlers.product import cancel_posting_query_handler, accept_posting_query_handler, add_product_conversation_handler, delete_product_query_handler
+import handlers.admin_handlers.storage as storage_handlers
+from bot.state_manager import StateManager
+from bot.callback_data_manager import CallbackDataManager
+from bank.mb import check_transaction_history
+import threading
 
 
 class Bot:
-    TEMP_DIR = "temp"
-    PRICE_PER_ACC = 0
-
     def __init__(self, token: str):
         self._token = token
         self.db = Container.db()
-        self.storage = CloudStorage()
-        self.payos = PayOsPayment()
-        self.lock = asyncio.Lock() 
         self._app = Application.builder().token(self._token).build()
-        self._app.add_handler(ConversationHandler(
-            entry_points=[
-                CommandHandler("start", start_handlers.start),
 
-                CommandHandler("set_storage", admin_handlers.set_storage),
-                CommandHandler("add", admin_handlers.start_add_files),
-            ],
-            states={
-                BotStates.START: [CallbackQueryHandler(start_handlers.choose_service)],
-                BotStates.ASK_PURCHASE_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, purchase_handlers.ask_purchase_amount)],
-                BotStates.CONFIRM_PURCHASE: [CallbackQueryHandler(purchase_handlers.confirm_purchase)],
-                BotStates.ASK_DEPOSIT_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, deposit_handlers.ask_deposit_amount)],
-                BotStates.CONFIRM_DEPOSIT: [CallbackQueryHandler(deposit_handlers.confirm_deposit)],
-
-                #Admin States
-                BotStates.SELECT_CATEGORY: [CallbackQueryHandler(admin_handlers.select_category)],
-                BotStates.RECEIVE_FILES: [MessageHandler(filters.ATTACHMENT, admin_handlers.receive_files), CommandHandler("stop", admin_handlers.stop_receive_files)]
-            },
-            fallbacks=[
-                CommandHandler("start", start_handlers.start), 
-                CommandHandler("set_storage", admin_handlers.set_storage),
-                CommandHandler("add", admin_handlers.start_add_files),
-            ]
-        ))
-
-        # Init log
+        """ Initialize logger """
         logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
                     level=logging.INFO)
         self._logger = logging.getLogger(__name__)
         self._logger.info("Setting done! Running...")
+
+        """ Setting up handlers """
+        """ Command start """
+        self._app.add_handler(CommandHandler("start", start_handlers.start))
+        
+        """ Refresh feature """
+        self._app.add_handler(CallbackQueryHandler(start_handlers.start, pattern=f"^({CallbackDataManager.REFRESH})$"))
+
+        """ Purchasing feature """
+        self._app.add_handler(ConversationHandler(
+            entry_points=[
+                CallbackQueryHandler(purchase_handlers.start_purchase, pattern=f"^{CallbackDataManager.PURCHASE_FEATURE}$"),
+            ],
+            states={
+                StateManager.CHOOSE_PURCHASE_CATEGORY: [CallbackQueryHandler(purchase_handlers.choose_category)],
+                StateManager.CHOOSE_PURCHASE_QUANTITY: [CallbackQueryHandler(purchase_handlers.choose_quantity)],
+                StateManager.CONFIRM_PURCHASE: [CallbackQueryHandler(purchase_handlers.confirm_purchase)],
+            },
+            fallbacks=[
+                
+            ],
+            per_message=True
+        ))
+        
+
+        """ Deposit feature """
+        self._app.add_handler(CallbackQueryHandler(deposit_handlers.start_deposit, pattern=f"^{CallbackDataManager.DEPOSIT_FEATURE}$"))
+        self._app.add_handler(CallbackQueryHandler(deposit_handlers.turn_back_start, pattern=f"^{CallbackDataManager.TURN_BACK_START_FROM_DEPOSIT}$"))
+
+
+        """ Admin handlers """
+        # Set storage handler
+        self._app.add_handler(CommandHandler("admin_set_storage", storage_handlers.set_storage))
+        # Conversation handler for adding product
+        self._app.add_handlers([
+            add_product_conversation_handler, accept_posting_query_handler, cancel_posting_query_handler, delete_product_query_handler
+        ])
+        # Conversation handler for adding category
+        self._app.add_handler(add_category_conversation_handler)
+
+        self.run_thread_checking_transation_history()
         self._app.run_polling()
-
-    async def send_tdata(self, update: Update, context: ContextTypes.DEFAULT_TYPE, amount_of_accounts: int):
-        # amount_of_accounts always greater than 0 and <= 100
-        accounts = self.storage.read_new_accounts(limit=amount_of_accounts)
-        print(accounts)
-        index = 1
-        message = ""
-        for account in accounts:
-            link=self.storage.get_download_link(account["id"])
-            message += f"Account {index} |SDT: {account['name']} |Link: {link}\n"
-            index += 1
-
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=message,
-            parse_mode="HTML"
-        )
+    
+    def run_thread_checking_transation_history(self):
+        thread = threading.Thread(target=check_transaction_history)
+        thread.daemon = True
+        thread.start()
 
     async def error(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._logger.error(f"Error occurred: {context.error}")

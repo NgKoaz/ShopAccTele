@@ -1,132 +1,169 @@
 from telegram.ext import *
 from telegram import *
-from states.bot_states import BotStates
-from callback_data.callback_data import CallbackData
-from callback_data.callback_data import CallbackData
 from services.container import Container
-
-import asyncio
 import handlers.start as start_handlers
 from config import Config
 
+from bot.state_manager import StateManager
+from bot.callback_data_manager import CallbackDataManager
 
-lock = asyncio.Lock() 
 
-async def _send_confirm_purchase_message(update: Update, context: ContextTypes.DEFAULT_TYPE, quantity, price_per_account):
-    # Setup keyboard
-    keyboard = [
-        [
-            InlineKeyboardButton("Hủy", callback_data=CallbackData.REFRESH), 
-            InlineKeyboardButton("Xác nhận", callback_data=CallbackData.CONFIRM_PURCHASE)
-        ]
-    ]
-    await context.bot.send_message(
-        chat_id=update.message.chat_id, 
-        text=f"Xác nhận là bạn muốn mua với số lượng <b>{quantity}</b> với giá <b>{price_per_account * quantity} VND</b>",
+
+""" Partially auditted """
+async def start_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+
+    # Category for all services and products
+    categories = Container.category_manager().get_categories()
+    keyboard = [[InlineKeyboardButton(category.name, callback_data=category.id)] for category in categories]
+    keyboard.append([InlineKeyboardButton("Quay lại", callback_data=CallbackDataManager.TURN_BACK_START_FROM_PURCHASE)])
+
+    await query.edit_message_text(
+        text="Vô mua hàng đi cu em",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="HTML"
     )
+    return StateManager.CHOOSE_PURCHASE_CATEGORY
 
 
-""" Called by another handler """
-async def start_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
+""" Partially auditted """
+async def choose_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query.data == CallbackDataManager.TURN_BACK_START_FROM_PURCHASE:
+        await start_handlers.start(update, context)
+        return ConversationHandler.END
+
+    # Save category_id except the state turn back from choosing quantity state
+    if query.data != CallbackDataManager.RELOAD_QUANTITY_STATE and query.data != CallbackDataManager.TURN_BACK_QUANTITY_FROM_CONFIRM:
+        context.user_data["purchase_category"] = query.data
+
+    # Setup keyboard to select quantity
+    keyboard = [
+        [
+            InlineKeyboardButton(text="1", callback_data="1"), 
+            InlineKeyboardButton(text="2", callback_data="2"), 
+            InlineKeyboardButton(text="5", callback_data="5"), 
+            InlineKeyboardButton(text="10", callback_data="10")
+        ]
+    ]
+    keyboard.append([InlineKeyboardButton("Quay lại", callback_data=CallbackDataManager.TURN_BACK_CATEGORY_FROM_QUANTITY)])
+
+    await query.edit_message_text(
+        text=f"Đã chọn {query.data}",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="HTML",
+    )
+    return StateManager.CHOOSE_PURCHASE_QUANTITY
+
+
+""" Partially auditted """
+async def choose_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query.data == CallbackDataManager.TURN_BACK_CATEGORY_FROM_QUANTITY:
+        return await start_purchase(update, context)        
+    elif query.data == CallbackDataManager.RELOAD_QUANTITY_STATE:
+        return await choose_category(update, context)
+
+    user_manager = Container.user_manager()
+    category_manager = Container.category_manager()
+    product_manager = Container.product_manager()
+
+    user = user_manager.get_user(update.effective_user.id)
+
+    category_id = context.user_data["purchase_category"]
+    category = category_manager.get_category(category_id)
+    
+    quantity = int(query.data)
+    context.user_data["purchase_quantity"] = quantity
+    
+    total_price = quantity * category.price
+    
+    if quantity > category.avai_products:
+        keyboard = [[InlineKeyboardButton("Quay lại", callback_data=CallbackDataManager.RELOAD_QUANTITY_STATE)]]
+        await query.edit_message_text(text="Tôi không đủ số lượng để bán!", reply_markup=InlineKeyboardMarkup(keyboard))
+        return StateManager.CHOOSE_PURCHASE_QUANTITY
+    elif total_price > user.balance:
+        keyboard = [[InlineKeyboardButton("Quay lại", callback_data=CallbackDataManager.RELOAD_QUANTITY_STATE)]]
+        await query.edit_message_text(text="Số tiền của bạn không đủ để mua!", reply_markup=InlineKeyboardMarkup(keyboard))
+        return StateManager.CHOOSE_PURCHASE_QUANTITY
+
+    # Setup keyboard to confirm purchase
+    keyboard = [
+        [
+            InlineKeyboardButton(text="Quay lại", callback_data=CallbackDataManager.TURN_BACK_QUANTITY_FROM_CONFIRM), 
+            InlineKeyboardButton(text=f"Xác nhận trả {total_price} VNĐ", callback_data=CallbackDataManager.CONFIRM_PAY_PURCHASE), 
+        ]
+    ]
+    await query.edit_message_text(
+        text=f"Đã chọn {query.data}",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="HTML",
+    )
+    return StateManager.CONFIRM_PURCHASE
+
+
+""" Partially auditted """
+async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query.data == CallbackDataManager.TURN_BACK_QUANTITY_FROM_CONFIRM:
+        return await choose_category(update, context)
+    
+    user_manager = Container.user_manager()
+    category_manager = Container.category_manager()
+    product_manager = Container.product_manager()
+
+    category_id = context.user_data["purchase_category"]
+    quantity = context.user_data["purchase_quantity"]
+    category = category_manager.get_category(category_id)
+    total_price = quantity * category.price
+
+    user = user_manager.get_user(update.effective_user.id)
+
+    if quantity > category.avai_products:
+        keyboard = [[InlineKeyboardButton("Quay lại", callback_data=CallbackDataManager.RELOAD_QUANTITY_STATE)]]
+        await query.edit_message_text(text="Tôi không đủ số lượng để bán!", reply_markup=InlineKeyboardMarkup(keyboard))
+        return StateManager.CHOOSE_PURCHASE_QUANTITY
+    elif total_price > user.balance:
+        keyboard = [[InlineKeyboardButton("Quay lại", callback_data=CallbackDataManager.RELOAD_QUANTITY_STATE)]]
+        await query.edit_message_text(text="Số tiền của bạn không đủ để mua!", reply_markup=InlineKeyboardMarkup(keyboard))
+        return StateManager.CHOOSE_PURCHASE_QUANTITY
+
+    await query.delete_message()
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text="Nhập số lượng account cần mua (hoặc nhập số 0 để thoát):"
+        text="Xác nhận mua thành công! Chuẩn bị gửi sản phẩm...",
+        parse_mode="HTML"
     )
-    return BotStates.ASK_PURCHASE_AMOUNT
+
+    await _send_product(update, context, category_id, quantity)
+
+    keyboard = [[InlineKeyboardButton("Bắt đầu lại", callback_data=CallbackDataManager.REFRESH)]]
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="Cảm ơn bạn đã tin tưởng nha!\n\nBấm /start để bắt đầu lại và cũng như lấy hướng dẫn sử dụng ạ.",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="HTML"
+    )
+    return ConversationHandler.END
 
 
-""" Handler for ConversationHandler """
-async def ask_purchase_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    if text and text.isnumeric():
-        quantity = int(text)
+""" Partially auditted """
+async def _send_product(update: Update, context: ContextTypes.DEFAULT_TYPE, category_id: str, quantity: int):
+    category_manager = Container.category_manager()
+    product_manager = Container.product_manager()
 
-        if quantity == 0:
-            return await start_handlers.start(update, context)
-        
-        if quantity > 100:
-            await context.bot.send_message(update.message.chat_id, text="Số lượng mua chỉ tối đa là 100/lượt!")
-            return BotStates.ASK_PURCHASE_AMOUNT
+    products = product_manager.get_products(category_id, quantity)
 
-        db = Container.db()
-        num_avai_account = db.count_new_accounts()
-        if quantity > num_avai_account:
-            await context.bot.send_message(update.message.chat_id, text=f"Số lượng mua vượt quá số lượng có sẵn là {num_avai_account}!")
-            return BotStates.ASK_PURCHASE_AMOUNT
-
-        # Go to a next state of purchase process
-        context.user_data["purchase_quantity"] = quantity
-        await _send_confirm_purchase_message(update, context, quantity, price_per_account=Config.PRICE_PER_ACC)
-        return BotStates.CONFIRM_PURCHASE
-    else:
-        await context.bot.send_message(update.message.chat_id, text="Không hợp lệ! Vui lòng nhập lại số lượng: ")
-        return BotStates.ASK_PURCHASE_AMOUNT
-
-
-async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Clear buttons
-    query = update.callback_query
-    await query.edit_message_reply_markup()
-
-    # Handle cancel button
-    if query.data == CallbackData.REFRESH:
+    for index, product in enumerate(products):
+        category_manager.transfer_avai_to_sold(category_id, update.effective_user.id, product.id)
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="Đã hủy mua!"
+            text=f"Sản phẩm {index}"
         )
-        return await start_handlers.start()
-
-    # Handle confirm button
-    elif query.data == CallbackData.CONFIRM_PURCHASE:
-        async with lock: 
-            quantity = context.user_data["purchase_quantity"]
-
-            db = Container.db()
-            # Check quantity with database
-            if quantity > db.count_new_accounts():
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text=f"Quá số lượng account hiện có!"
-                )
-                return await start_handlers.start(update, context)
-            
-            # Check amount of user's money
-            user = db.get_user(update.effective_user.id)
-            total_price = quantity * Config.PRICE_PER_ACC
-            if total_price > user.balance:
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text=f"Số tiền hiện tại không đủ để thanh toán"
-                )
-                return await start_handlers.start(update, context)
-
-            # Validated data
-            ## Deduct user's balance
-            user.balance -= total_price
-            db.save_user(update.effective_user.id, user)
-
-            ## Send acknownledge
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=f"Đã mua thành công! Chuẩn bị gửi {quantity} tdata cho các account khác nhau..."
-            )
-            ## Send purchased sessions
-            # await self.send_tdata(update, context, quantity)
-            ## Send acknowledge ending sending sessions
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=f"Hoàn tất đơn hàng"
-            )
-
-            # Go back to initial state
-            return await start_handlers.start(update, context)
-
-    else:
-        await context.bot.send_message(
+        await context.bot.forward_message(
             chat_id=update.effective_chat.id,
-            text="Lỗi không mong muốn! Hãy bắt đầu lại!"
+            from_chat_id=product.backup_storage_group_id,
+            message_id=product.backup_message_id
         )
-        return await start_handlers.start(update, context)
+
 

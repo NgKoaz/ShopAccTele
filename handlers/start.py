@@ -1,102 +1,94 @@
 from telegram.ext import *
 from telegram import *
-from states.bot_states import BotStates
-from callback_data.callback_data import CallbackData
 from services.container import Container
-from handlers.deposit import start_deposit
-from handlers.purchase import start_purchase
+from bot.callback_data_manager import CallbackDataManager
+from bot.mode import Mode
 
 
-async def _preprocess_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def set_user_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["mode"] = Mode.USER
+
+def is_add_product_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    return context.user_data["mode"] == Mode.USER
+
+
+""" Auditted """
+async def _generate_keyboard_and_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Get services
-    db = Container.db()
-    payos = Container.payos()
-
-    # Check last payment and send hello message
-    user = db.get_user(update.effective_user.id)
-    if user.latest_payment_id != -1:
-        data = payos.get_payment(user.latest_payment_id)
-        if data.status == "PENDING":
-            payos.cancel_payment(user.latest_payment_id)
-        elif data.status == "PAID":
-            user.balance += int(data.amountPaid)
-            await context.bot.send_message(
-                chat_id=update.effective_user.id,
-                text=f"Bạn đã nạp thêm số tiền {data.amountPaid} VND"
-            )
-        user.latest_payment_id = -1
-        db.save_user(update.effective_user.id, user)
-
-
-async def _send_messsage(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Get services
-    db = Container.db()
+    user_manager = Container.user_manager()
+    category_manager = Container.category_manager()
 
     # Fetch user's balance and inventory information
-    user = db.get_user(update.effective_user.id)
+    user = user_manager.get_user(update.effective_user.id)
     balance = user.balance
 
     # Category for all services and products
-    categories = db.get_categories()
+    categories = category_manager.get_categories()
 
-    # Setup keyboard
-    keyboard = [[InlineKeyboardButton(category.name, callback_data=category.id)] for category in categories]
-    keyboard.append([
-            InlineKeyboardButton("Re-fresh", callback_data=CallbackData.REFRESH), 
-            InlineKeyboardButton("Mua tài khoản", callback_data=CallbackData.BUY_REQUEST)
-        ])
-    keyboard.append([
-            InlineKeyboardButton("Nạp tiền", callback_data=CallbackData.DEPOSIT_REQUEST)
-        ])
-    
-    # Message
+    keyboard = [
+        [InlineKeyboardButton("Mua tài khoản", callback_data=CallbackDataManager.PURCHASE_FEATURE)],
+        [InlineKeyboardButton("Nạp tiền", callback_data=CallbackDataManager.DEPOSIT_FEATURE)],
+        [InlineKeyboardButton("Load lại", callback_data=CallbackDataManager.REFRESH)]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
     message=(
         "🎉 <b>Chào mừng bạn đến với shop</b> 🎉\n\n"
         f"💰 <b>Số dư của bạn:</b> <code>{balance} VNĐ</code>\n"
         f"📌 <b>Các dịch vụ cung cấp:</b>\n\n"
     )
     for category in categories:
-        message += f"<b>{category.name}:</b> <code>{category.avai_products}</code>\n"
+        message += f"<b>{category.name}:</b> <code>{category.avai_products}</code> | Giá: {category.price} VND\n"
     message += "\n\n📞 Liên hệ hỗ trợ nếu cần giúp đỡ!"
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text=message,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="HTML"
-    )
+
+    return [reply_markup, message]
     
 
-""" Called by another handler and ConversationHandler """
-""" Run when bot is in initial state of system """
+async def _send_hint_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    bot = context.bot
+    commands = [
+        ('start', 'Bắt đầu nói chuyện với bot'),
+        ('help', 'Show help message'),
+        ('admin_add_category', '[ADMIN ONLY] Thêm danh mục'),
+        ('admin_add_product', '[ADMIN ONLY] Thêm sản phẩm'),
+    ]
+    # Set the commands for the bot
+    await bot.set_my_commands(commands)
+
+
+""" Auditted """
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Handle old transaction
-    await _preprocess_start(update, context)
+    set_user_mode(update, context)
 
-    # Send message
-    await _send_messsage(update, context)
-    return BotStates.START
-
-
-""" Choose one of those services in keyboard markup of _send_messsage function """ 
-async def choose_service(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Clear buttons
+    reply_markup, message = await _generate_keyboard_and_text(update, context)
     query = update.callback_query
-    await query.edit_message_reply_markup()
-    
-    # Handle respectively
-    if query.data == CallbackData.REFRESH:
-        return await start(update, context)
-    elif query.data == CallbackData.BUY_REQUEST:
-        return await start_purchase(update, context)
-    elif query.data == CallbackData.DEPOSIT_REQUEST:
-        return await start_deposit(update, context)
+    if query:
+        if query.data == CallbackDataManager.REFRESH:
+            await query.edit_message_reply_markup()
+            await query.edit_message_text(
+                text=message,
+                reply_markup=reply_markup,
+                parse_mode="HTML"
+            )
+        elif query.data == CallbackDataManager.TURN_BACK_START_FROM_DEPOSIT:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=message,
+                reply_markup=reply_markup,
+                parse_mode="HTML"
+            )
+        elif query.data == CallbackDataManager.TURN_BACK_START_FROM_PURCHASE:
+            await query.edit_message_text(
+                text=message,
+                reply_markup=reply_markup,
+                parse_mode="HTML"
+            )
     else:
-        query.data
-
-        
+        await _send_hint_commands(update, context)
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="Lỗi không mong muốn! Hãy bắt đầu lại!"
+            text=message,
+            reply_markup=reply_markup,
+            parse_mode="HTML"
         )
-        return await start(update, context)
+
 

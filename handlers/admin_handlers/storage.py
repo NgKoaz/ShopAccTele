@@ -2,48 +2,20 @@ from telegram.ext import *
 from telegram import *
 from config import Config
 from services.container import Container
-import os
-
-
-async def delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    args = context.args  # Lấy các tham số sau lệnh
-    if not args:
-        await update.message.reply_text("❌ Bạn chưa nhập mật khẩu! Vui lòng nhập: `/admin yourpassword`")
-        return ConversationHandler.END
-    
-    password = args[0]
-    if password == Config.TELEGRAM_ADMIN_PASSWORD:
-        await update.message.reply_text("✅ Xác thực thành công!")
-    else:
-        await update.message.reply_text("❌ Sai mật khẩu!")
-    return ConversationHandler.END
-
-
-async def look_up(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    args = context.args  # Lấy các tham số sau lệnh
-    if not args:
-        await update.message.reply_text("❌ Bạn chưa nhập mật khẩu! Vui lòng nhập: `/admin yourpassword`")
-        return ConversationHandler.END
-    
-    password = args[0]
-    if password == Config.TELEGRAM_ADMIN_PASSWORD:
-        await update.message.reply_text("✅ Xác thực thành công!")
-    else:
-        await update.message.reply_text("❌ Sai mật khẩu!")
-    return ConversationHandler.END
 
 
 async def set_storage(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Run only in group chat
     chat_type = update.message.chat.type
     if not chat_type in ["group", "supergroup"]:
-        return ConversationHandler.END 
+        await update.message.reply_text("❌ Dùng sai câu lệnh! Liên hệ với admin để biết tác dụng về câu lệnh này.")
+        return
     
     # Check if user enter the password
     args = context.args 
     if not args or len(args) != 1:
-        await update.message.reply_text("❌ Bạn chưa nhập mật khẩu! Vui lòng nhập: `/set_storage <password>`")
-        return ConversationHandler.END
+        await update.message.reply_text("❌ Nhập sai định dạng câu lệnh! Liên hệ với admin để biết cấu trúc của câu lệnh này.")
+        return
     
     # Check password
     password = args[0]
@@ -63,6 +35,4 @@ async def set_storage(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Bot chưa có trong nhóm.")
     else:
         await update.message.reply_text("❌ Sai mật khẩu!")
-    
-    return ConversationHandler.END
-
+    return

@@ -1,0 +1,8 @@
+class Mode:
+    USER = "USER"
+    ADMIN_ADD_CATEGORY = "ADMIN_ADD_CATEGORY"
+    ADMIN_ADD_PRODUCT = "ADMIN_ADD_PRODUCT"
+
+
+
+    

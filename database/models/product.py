@@ -3,10 +3,7 @@ from dataclasses import dataclass
 
 @dataclass
 class Product:
-    category_id: str = ""
-    user_id: str = ""   # Empty if nobody owns this product
-    file_id: str = ""
-    
-    backup_message_id: str = ""
-    backup_storage_group_id: str = ""
-
+    id: str = ""                        # Auto generate
+    user_id: str = ""                   # Empty if nobody owns this product
+    backup_message_id: str = ""         # Message ID attaching with file
+    backup_storage_group_id: str = ""   # Group ID where the message is
