@@ -12,20 +12,19 @@ prefix = "TELE"
 
 
 def check_transaction_history():
-    pass
-    # mb = MBBank(username="0905770857", password="Arigato147!", proxy=None, ocr_class=OcrScanner())
-    # while True:
-    #     try:
-    #         today = datetime.today()
-    #         seven_days_ago = datetime.today() - timedelta(days=2)
-    #         result = mb.getTransactionAccountHistory(accountNo="0905770857", from_date=seven_days_ago, to_date=today)
-    #         with open("bank/result.json", 'w', encoding='utf-8') as file:
-    #             json.dump(result, file, ensure_ascii=False, indent=4)
-    #         _save_transactions(result["transactionHistoryList"])
+    mb = MBBank(username="0905770857", password="Arigato147!", proxy=None, ocr_class=OcrScanner())
+    while True:
+        try:
+            today = datetime.today()
+            seven_days_ago = datetime.today() - timedelta(days=2)
+            result = mb.getTransactionAccountHistory(accountNo="0905770857", from_date=seven_days_ago, to_date=today)
+            with open("bank/result.json", 'w', encoding='utf-8') as file:
+                json.dump(result, file, ensure_ascii=False, indent=4)
+            _save_transactions(result["transactionHistoryList"])
             
-    #         time.sleep(12)
-    #     except MBBankError:
-    #         mb = MBBank(username="0905770857", password="Arigato147!", proxy=None, ocr_class=OcrScanner())
+            time.sleep(12)
+        except MBBankError:
+            mb = MBBank(username="0905770857", password="Arigato147!", proxy=None, ocr_class=OcrScanner())
     
 
 def _save_transactions(transactions):
