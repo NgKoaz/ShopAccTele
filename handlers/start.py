@@ -3,6 +3,7 @@ from telegram import *
 from services.container import Container
 from bot.callback_data_manager import CallbackDataManager
 from bot.mode import Mode
+from firebase_admin import firestore
 
 
 def set_user_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -91,4 +92,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML"
         )
 
+    await test_transaction()
 
+    
+async def test_transaction():
+    db = Container.db().get_firestore()
+    transaction = db.transaction()
+    city_ref = db.collection("cities").document("SF")
+
+    @firestore.async_transactional
+    async def update_in_transaction(transaction, city_ref):
+        snapshot = await city_ref.get(transaction=transaction)
+        transaction.update(city_ref, {"population": snapshot.get("population") + 1})
+
+    await update_in_transaction(transaction, city_ref)
+ 

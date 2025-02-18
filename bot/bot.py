@@ -5,10 +5,10 @@ from services.container import Container
 import handlers.start as start_handlers
 import handlers.purchase as purchase_handlers
 import handlers.deposit as deposit_handlers
-from handlers.admin_handlers.category import add_category_conversation_handler
-from handlers.admin_handlers.product import cancel_posting_query_handler, accept_posting_query_handler, add_product_conversation_handler, delete_product_query_handler
-import handlers.admin_handlers.delete_category as delete_category_handlers
-import handlers.admin_handlers.storage as storage_handlers
+from handlers.admin.category import add_category_conversation_handler
+from handlers.admin.product import cancel_posting_query_handler, accept_posting_query_handler, add_product_conversation_handler, delete_product_query_handler
+import handlers.admin.delete_category as delete_category_handlers
+import handlers.admin.storage as storage_handlers
 from bot.state_manager import StateManager
 from bot.callback_data_manager import CallbackDataManager
 from bank.mb import check_transaction_history

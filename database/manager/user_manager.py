@@ -1,10 +1,11 @@
 
 from services.database import Database
-from database.models.product import Product
+from firebase_admin import firestore
 from database.models.user import User
 from dataclasses import asdict
 from google.cloud.firestore_v1.transaction import Transaction
-
+from exceptions.user_exceptions import NegativeBalanceError
+from typing import Callable
 
 
 class UserManager:
@@ -36,18 +37,42 @@ class UserManager:
         doc_ref = self.firestore.collection(self.USER_COLLECTION).document(str(user_id))
         doc_ref.set(asdict(user))
 
-    """ Using transaction """
-    def add_balance(self, user_id: str, amount: int) -> None:
+    async def add_balance(self, user_id: str, amount: int) -> None:
+        """
+            Raise: NegativeBalanceError
+        """
         user_ref = self.db.document(self.USER_COLLECTION, user_id)
-        def transaction_operation(transaction: Transaction):
-            user_doc = transaction.get(user_ref)
-            if user_doc.exists:
-                user = User(**user_doc.to_dict())
-                user.balance += amount
-                user_ref.update({'balance': user.balance})
-            else:
-                new_user = User(balance = amount, admin_password="")
-                user_ref.set(asdict(new_user))
-        self.db.transaction(transaction_operation=transaction_operation)
+
+        async def transaction_operation(transaction: Transaction):
+            user_doc = await user_ref.get(transaction=transaction)
+            user = User(**user_doc.to_dict()) if user_doc.exists else  User(balance = amount, admin_password="")
+            user.balance += amount
+
+            if user.balance < 0:
+                raise NegativeBalanceError("Negative balance!")
+            
+            transaction.set(user_ref, asdict(user))
+
+        await self.db.transaction(transaction_operation)
+
+
+    def add_balance_transaction(self, user_id: str, amount: int) -> Callable[[Transaction], None]:
+        """
+            Raise: NegativeBalanceError
+        """
+        user_ref = self.db.document(self.USER_COLLECTION, user_id)
+
+        async def transaction_operation(transaction: Transaction) -> None:
+            user_doc = await user_ref.get(transaction=transaction)
+            user = User(**user_doc.to_dict()) if user_doc.exists else User(balance = amount, admin_password="")
+            user.balance += amount
+
+            if user.balance < 0:
+                raise NegativeBalanceError("Negative balance!")
+            
+            transaction.set(user_ref, asdict(user))
+
+        return transaction_operation
+
 
 

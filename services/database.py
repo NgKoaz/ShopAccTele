@@ -1,8 +1,9 @@
 import firebase_admin
 from firebase_admin import credentials, firestore, db
+from google.cloud import firestore
 from dataclasses import asdict
 from database.models.setting_document import SettingDocument
-from typing import Callable, Any
+from typing import Callable, Any, List
 from google.cloud.firestore_v1.transaction import Transaction
 
 
@@ -65,14 +66,22 @@ class Database:
 
 
     def document(self, *args: str):
-        return self.firestore.document(args)
+        args = [str(arg) for arg in args]
+        return self.firestore.document("/".join(args))
 
     def collection(self, *args: str):
-        return self.firestore.collection(args)
+        args = [str(arg) for arg in args]
+        return self.firestore.collection("/".join(args))
 
-    def transaction(self, transaction_operation: Callable[[Transaction], Any]) -> Any:
-        transaction = self.firestore.transaction()
-        result = transaction_operation(transaction) 
-        transaction.commit()
-        return result
+    async def exec_transactions(self, transaction_operations: List[Callable[[Transaction], Any]]) -> List[Any]:
+        @firestore.async_transactional
+        async def transaction_wrapper(transaction: Transaction) -> List[Any]:
+            results = []
+            for transaction_operation in transaction_operations:
+                pass
+                # result = await transaction_operation(transaction)  # Execute each transaction operation
+                # results.append(result)
+            return results
+
+        return await transaction_wrapper(self.firestore.transaction())
     

@@ -5,5 +5,9 @@ from services.container import Container
 from bot.bot import Bot
 
 
+
 load_dotenv()
 bot = Bot(token=os.getenv("TOKEN"))
+
+
+

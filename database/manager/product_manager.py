@@ -1,10 +1,14 @@
 
 from services.database import Database
 from database.models.product import Product
+from database.models.category import Category
 from dataclasses import asdict
 import services.container as container
+from firebase_admin import firestore
 from google.cloud.firestore_v1.transaction import Transaction
-from typing import List
+from typing import List, Callable
+from exceptions.product_exceptions import NotEnoughProductsError
+from exceptions.category_exceptions import NotFoundCategoryError
 
 
 class ProductManager:
@@ -74,30 +78,43 @@ class ProductManager:
         category_manager.save_category(category_id, category)
         return "product" + str(next_product_id)
     
-    """ Using transaction """
-    def buy_products(self, category_id: str, user_id: int, limit: int) -> str:
-        avai_col = self.db.collection(self.CATEGORY_COLLECTION, category_id, self.AVAILABLE)
-        sold_col = self.db.collection(self.CATEGORY_COLLECTION, category_id, self.SOLD)
+   
+    def buy_products_transaction(self, category_id: str, user_id: int, limit: int) -> Callable[[Transaction], None]:
+        """
+            Raise: NotEnoughProductsError
+            Raise: NotFoundCategoryError
+        """
+        cate_doc_ref = self.db.document(self.CATEGORY_COLLECTION, category_id)
+        avai_col_ref = self.db.collection(self.CATEGORY_COLLECTION, category_id, self.AVAILABLE)
+        sold_col_ref = self.db.collection(self.CATEGORY_COLLECTION, category_id, self.SOLD)
 
-        def transaction_operation(transaction: Transaction):
-            products_query = avai_col.stream()
-            products = []
+        async def transaction_operation(transaction: Transaction) -> None:
+            cate_doc = await cate_doc_ref.get(transaction=transaction)
+            if cate_doc.exists:
+                category = Category(**cate_doc.to_dict())
+                if category.avai_products < limit:
+                    raise NotEnoughProductsError(f"Not enough products to move. Available: {category.avai_products}, Required: {limit}")
+                else:
+                    category.avai_products -= limit
+                    transaction.update(cate_doc_ref, {'avai_products': category.avai_products})
+            else:
+                raise NotFoundCategoryError(f"Category is not found!")
+
+            products_query = avai_col_ref.stream(transaction=transaction)
             count = 0
-            for product_doc in products_query:
+            async for product_doc in products_query:
                 if count >= limit:
                     break  
                 product = Product(**product_doc.to_dict())
                 product.user_id = user_id
 
                 # Set the product data in the target category (moving the product)
-                transaction.set(sold_col.document(product_doc.id), asdict(product))
+                transaction.set(sold_col_ref.document(product_doc.id), asdict(product))
 
                 # Delete the product from the source category
                 transaction.delete(product_doc.reference)
 
                 count += 1
-            return products
-        
-        return self.db.transaction(transaction_operation)
+            return
+        return transaction_operation
     
-

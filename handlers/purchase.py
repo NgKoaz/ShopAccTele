@@ -2,11 +2,11 @@ from telegram.ext import *
 from telegram import *
 from services.container import Container
 import handlers.start as start_handlers
-from config import Config
-
+from exceptions.product_exceptions import NotEnoughProductsError
 from bot.state_manager import StateManager
 from bot.callback_data_manager import CallbackDataManager
-
+from typing import List
+from database.models.product import Product
 
 
 """ Partially auditted """
@@ -128,8 +128,7 @@ async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text="Số tiền của bạn không đủ để mua!", reply_markup=InlineKeyboardMarkup(keyboard))
         return StateManager.CHOOSE_PURCHASE_QUANTITY
 
-    # Deduct user balance
-    user_manager.add_balance(update.effective_user.id, -total_price)
+
 
     await query.delete_message()
     await context.bot.send_message(
@@ -137,25 +136,40 @@ async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text="Xác nhận mua thành công! Chuẩn bị gửi sản phẩm...",
         parse_mode="HTML"
     )
+    try:
+        await _send_product(update, context, category_id, quantity, total_price)
 
-    await _send_product(update, context, category_id, quantity)
-
-    keyboard = [[InlineKeyboardButton("Bắt đầu lại", callback_data=CallbackDataManager.REFRESH)]]
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="Cảm ơn bạn đã tin tưởng nha!\n\nBấm /start để bắt đầu lại và cũng như lấy hướng dẫn sử dụng ạ.",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="HTML"
-    )
+        keyboard = [[InlineKeyboardButton("Bắt đầu lại", callback_data=CallbackDataManager.REFRESH)]]
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="Cảm ơn bạn đã tin tưởng nha!\n\nBấm /start để bắt đầu lại và cũng như lấy hướng dẫn sử dụng ạ.",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML"
+        )
+    except NotEnoughProductsError as e:
+        print(e)
+        keyboard = [[InlineKeyboardButton("Bắt đầu lại", callback_data=CallbackDataManager.REFRESH)]]
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="Số lượng bất ngờ không đủ. Vui lòng bắt đầu lái",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML"
+        )
+        
     return ConversationHandler.END
 
 
 """ Partially auditted """
-async def _send_product(update: Update, context: ContextTypes.DEFAULT_TYPE, category_id: str, quantity: int):
+async def _send_product(update: Update, context: ContextTypes.DEFAULT_TYPE, category_id: str, quantity: int, total_price: int):
+    user_manager = Container.user_manager()
     category_manager = Container.category_manager()
     product_manager = Container.product_manager()
 
-    products = product_manager.get_products(category_id, quantity)
+    transactions = []
+    transactions.append(product_manager.buy_products_transaction(category_id=category_id, user_id=update.effective_user.id, limit=quantity))
+    transactions.append(user_manager.add_balance_transaction(update.effective_user.id, -total_price))
+    products, _ = await Container.db().exec_transactions(transactions)
+    products: List[Product]
 
     for index, product in enumerate(products):
         category_manager.transfer_avai_to_sold(category_id, update.effective_user.id, product.id)
