@@ -7,6 +7,7 @@ import handlers.purchase as purchase_handlers
 import handlers.deposit as deposit_handlers
 from handlers.admin_handlers.category import add_category_conversation_handler
 from handlers.admin_handlers.product import cancel_posting_query_handler, accept_posting_query_handler, add_product_conversation_handler, delete_product_query_handler
+import handlers.admin_handlers.delete_category as delete_category_handlers
 import handlers.admin_handlers.storage as storage_handlers
 from bot.state_manager import StateManager
 from bot.callback_data_manager import CallbackDataManager
@@ -64,6 +65,9 @@ class Bot:
         ])
         # Conversation handler for adding category
         self._app.add_handler(add_category_conversation_handler)
+
+        """ ADMIN DELETE CATEGORY HANDLERS """
+        self._app.add_handlers(delete_category_handlers.handlers)
 
         self.run_thread_checking_transation_history()
         self._app.run_polling()

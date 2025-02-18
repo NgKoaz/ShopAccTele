@@ -3,6 +3,8 @@ from services.database import Database
 from database.models.product import Product
 from dataclasses import asdict
 import services.container as container
+from google.cloud.firestore_v1.transaction import Transaction
+from typing import List
 
 
 class ProductManager:
@@ -11,6 +13,7 @@ class ProductManager:
     SOLD = "sold"
 
     def __init__(self, db: Database):
+        self.db = db
         self.firestore = db.get_firestore()
 
     def get_products(self, category_id: str, limit: int, is_sold=False) -> dict[Product]:
@@ -39,6 +42,28 @@ class ProductManager:
         doc_ref.delete()
         category_manager.add_total_product(category_id, -1)
 
+
+    def pop_products_transaction(self, category_id: str) -> List[Product]:
+        def transaction_operation(transaction, category_id):
+            avai_products_ref = self.firestore.collection("/".join([self.CATEGORY_COLLECTION, category_id, self.AVAILABLE]))
+
+            # Use a query to fetch the documents
+            avai_products_query = avai_products_ref.stream() 
+            products = []
+
+            # Loop through the products in the query result
+            for product_doc in avai_products_query:
+                product_ref = self.firestore.document("/".join([self.CATEGORY_COLLECTION, category_id, self.AVAILABLE, product_doc.id]))
+                transaction.delete(product_ref)
+                products.append(Product(**product_doc.to_dict()))
+            return products
+        
+        transaction = self.firestore.transaction()
+        products = transaction_operation(transaction, category_id) 
+        transaction.commit()
+        return products
+
+
     def generate_product_id(self, category_id: str) -> str:
         category_manager = container.Container.category_manager()
         category = category_manager.get_category(category_id)
@@ -49,3 +74,30 @@ class ProductManager:
         category_manager.save_category(category_id, category)
         return "product" + str(next_product_id)
     
+    """ Using transaction """
+    def buy_products(self, category_id: str, user_id: int, limit: int) -> str:
+        avai_col = self.db.collection(self.CATEGORY_COLLECTION, category_id, self.AVAILABLE)
+        sold_col = self.db.collection(self.CATEGORY_COLLECTION, category_id, self.SOLD)
+
+        def transaction_operation(transaction: Transaction):
+            products_query = avai_col.stream()
+            products = []
+            count = 0
+            for product_doc in products_query:
+                if count >= limit:
+                    break  
+                product = Product(**product_doc.to_dict())
+                product.user_id = user_id
+
+                # Set the product data in the target category (moving the product)
+                transaction.set(sold_col.document(product_doc.id), asdict(product))
+
+                # Delete the product from the source category
+                transaction.delete(product_doc.reference)
+
+                count += 1
+            return products
+        
+        return self.db.transaction(transaction_operation)
+    
+

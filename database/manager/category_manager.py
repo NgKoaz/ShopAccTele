@@ -90,3 +90,13 @@ class CategoryManager:
 
         return f"category{next_category_id}"
 
+    def delete_category_transaction(self, category_id: str):
+        cate_ref = self.firestore.collection(self.CATEGORY_COLLECTION).document(category_id)
+        def transaction_operation(transaction):
+            transaction.delete(cate_ref)  
+            
+        transaction = self.firestore.transaction()
+        transaction_operation(transaction) 
+        transaction.commit()
+
+

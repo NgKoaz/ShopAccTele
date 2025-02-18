@@ -128,6 +128,9 @@ async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text="Số tiền của bạn không đủ để mua!", reply_markup=InlineKeyboardMarkup(keyboard))
         return StateManager.CHOOSE_PURCHASE_QUANTITY
 
+    # Deduct user balance
+    user_manager.add_balance(update.effective_user.id, -total_price)
+
     await query.delete_message()
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
