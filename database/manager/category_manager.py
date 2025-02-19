@@ -1,102 +1,61 @@
-from services.database import Database
 from database.models.category import Category
-from database.models.common_data import CommonData
 from database.models.product import Product
+from database.manager.base_manager import BaseManager
+from database.manager.common_manager import CommonManager
+from functools import partial
 from dataclasses import asdict
+from typing import List
 
 
-class CategoryManager:
-    CATEGORY_COLLECTION = "categories"
-    AVAILABLE = "avai"
-    SOLD = "sold"
-    COMMON_DATA_DOCUMENT = "data/common"
+class CategoryManager(BaseManager):
+    _instance = None
 
+    @staticmethod
+    def get_ins():
+        if CategoryManager._instance is None:
+            CategoryManager._instance = CategoryManager()
+        return CategoryManager._instance
 
-    def __init__(self, db: Database):
-        self.firestore = db.get_firestore()
-
-    def get_categories(self) -> dict[Category]:
-        query = self.firestore.collection(self.CATEGORY_COLLECTION)
-        docs = query.get()
-        categories = [Category(**doc.to_dict()) for doc in docs]
+    @staticmethod
+    async def get_categories() -> List[Category]:
+        cursor = CategoryManager._db.categories.find()
+        categories = [Category(category) for category in await cursor.to_list()]
         return categories
-
-    def get_category(self, category_id: str) -> Category | None: 
-        doc_ref = self.firestore.collection(self.CATEGORY_COLLECTION).document(category_id)
-        doc = doc_ref.get()
-        if doc.exists:
-            return Category(**doc.to_dict())
-        return None
-
-    def has_category(self, category_id: str) -> bool:
-        doc = self.get_category(category_id)
-        return doc is not None
-
-    def total_avai_accounts_in_category(self, category_id: str) -> int:
-        doc = self.get_category(category_id)
-        if doc:
-            category = Category(**doc.to_dict())
-            total_avai_products = category.avai_products
-            return total_avai_products
-        else:
-            return 0
-
-    def save_category(self, category_id: str, category: Category):
-        category_ref = self.firestore.collection(self.CATEGORY_COLLECTION).document(category_id)
-        category_ref.set(asdict(category))
-
-    def transfer_avai_to_sold(self, category_id: str, user_id: str, product_id: str) -> int:
-        avai_ref = self.firestore.document("/".join((self.CATEGORY_COLLECTION, category_id, self.AVAILABLE, product_id)))
-        doc = avai_ref.get()
-        product = Product(**doc.to_dict())
-        avai_ref.delete()
-
-        sold_ref = self.firestore.document("/".join((self.CATEGORY_COLLECTION, category_id, self.SOLD, product_id)))
-        product.user_id = user_id
-        sold_ref.set(asdict(product))
-
-        # Edit category
-        category = self.get_category(category_id)
-        category.avai_products -= 1
-        category.sold_products += 1
-        self.save_category(category_id, category)
     
-    def add_total_product(self, category_id: str, number: int) -> None:
-        category = self.get_category(category_id)
-        if category:
-            category.avai_products += number
-            self.save_category(category_id, category)
+    @staticmethod
+    async def get_category(id: str, session=None) -> Category | None:
+        category = await CategoryManager._db.categories.find_one({"id": id}, session=session)
+        return Category(category) if category else None
+    
+    @staticmethod
+    async def create_category(category: Category):
+        result = CategoryManager.exec_transactions([CommonManager.generate_category_id])
+        category.id = result[0]
+        await CategoryManager._db.categories.insert_one(asdict(category))
 
-    def get_common_data(self) -> CommonData:
-        doc_ref = self.firestore.document(self.COMMON_DATA_DOCUMENT)
-        doc = doc_ref.get()
-        if doc.exists:
-            return CommonData(**doc.to_dict())
-        else:
-            common_data = CommonData()
-            doc_ref.set(asdict(common_data))
-            return common_data
+    @staticmethod
+    async def generate_product_id(category_id: int, session) -> int:
+        category = await CategoryManager.get_category(category_id, session=session)
+        if category is None:
+            raise Exception("Category ID is not found!")
+        
+        new_product_id = category.next_product_id
+        await CategoryManager._db.categories.update_one({"id": category_id}, {"$inc": {"next_product_id": 1}}, session=session)
+        return new_product_id
 
-    def save_common_data(self, common_data: CommonData) -> str:
-        doc_ref = self.firestore.document(self.COMMON_DATA_DOCUMENT)
-        doc_ref.set(asdict(common_data))
+    @staticmethod
+    async def inc_num_products(category_id: int, inc_amount: int, is_sold: bool, session):
+        """ Only add with number of available products """
+        if is_sold:
+            return
+        await CategoryManager._db.categories.update_one(
+            {'id': category_id}, 
+            {'$inc': { 'num_avai_products' : inc_amount }}, 
+            session=session
+        )
 
-    def generate_category_id(self):
-        common_data = self.get_common_data()
-        next_category_id = common_data.next_category_id
-
-        common_data.next_category_id += 1
-        self.save_common_data(common_data)
-
-        return f"category{next_category_id}"
-
-    def delete_category_transaction(self, category_id: str):
-        cate_ref = self.firestore.collection(self.CATEGORY_COLLECTION).document(category_id)
-        def transaction_operation(transaction):
-            transaction.delete(cate_ref)  
-            
-        transaction = self.firestore.transaction()
-        transaction_operation(transaction) 
-        transaction.commit()
-
+    @staticmethod
+    async def delete_category(category_id: str, session) -> Category | None:
+        category = await CategoryManager._db.categories.find_one_and_delete({'id': category_id}, session=session)
+        return Category(category) if category else None
 

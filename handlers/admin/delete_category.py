@@ -1,12 +1,16 @@
 from telegram.ext import *
 from telegram import *
 from config import Config
-from services.container import Container
+from database.manager.all_managers import *
 from bot.state_manager import StateManager
 from database.models.category import Category
+from database.models.product import Product
 from bot.callback_data_manager import CallbackDataManager
+from typing import List
+from functools import partial
 from bot.mode import Mode
 import asyncio
+
 
 
 def set_delete_category_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -16,13 +20,10 @@ def is_delete_category_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     return context.user_data["mode"] == Mode.ADMIN_DELETE_CATEGORY
 
 
-def _start_keyboard_and_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    category_manager = Container.category_manager()
-    categories = category_manager.get_categories()
+async def _start_keyboard_and_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    categories = await CategoryManager.get_categories()
     keyboard = [[InlineKeyboardButton(text=category.name, callback_data=f"{CallbackDataManager.DELETE_CATEGORY}{category.id}")] for category in categories]
-
     message = f"Hãy chọn một category để xóa"
-
     return [InlineKeyboardMarkup(keyboard), message]
 
 
@@ -60,7 +61,7 @@ async def start_delete_category(update: Update, context: ContextTypes.DEFAULT_TY
 async def choose_delete_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     delete_category_id = query.data[len(CallbackDataManager.DELETE_CATEGORY):]
-    category = Container.category_manager().get_category(delete_category_id)
+    category = await CategoryManager.get_category(delete_category_id)
 
     if category is None:
         await query.edit_message_text(f"Danh mục bạn đã chọn đã không còn tồn tại!")
@@ -80,17 +81,20 @@ async def choose_delete_category(update: Update, context: ContextTypes.DEFAULT_T
 async def confirm_delete_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     delete_category_id = query.data[len(CallbackDataManager.CONFIRM_DELETE_CATEGORY):]
-    category = Container.category_manager().get_category(delete_category_id)
 
-    if category is None:
-        await query.edit_message_text(f"Danh mục bạn đã chọn đã không còn tồn tại!")
-        return
+    # category = Container.category_manager().get_category(delete_category_id)
 
-    product_manager = Container.product_manager()
-    category_manager = Container.category_manager()
-
-    products = product_manager.pop_products_transaction(category.id)
-    category_manager.delete_category_transaction(category.id)
+    # if category is None:
+    #     await query.edit_message_text(f"Danh mục bạn đã chọn đã không còn tồn tại!")
+    #     return
+    
+    transactions = [
+        partial(ProductManager.delete_products, category_id=delete_category_id),
+        partial(CategoryManager.delete_category, category_id=delete_category_id)
+    ]
+    results = await CategoryManager.exec_transactions(transactions)
+    products: List[Product] = results[0]
+    category: Category = results[1]
 
     message = f"Đã xóa danh mục `{category.name}`. Chuẩn bị gửi trả sản phẩm nếu có..."
     await query.edit_message_text(
@@ -99,13 +103,15 @@ async def confirm_delete_category(update: Update, context: ContextTypes.DEFAULT_
     )
 
     for product in products:
-        await context.bot.forward_message(
-            chat_id=update.effective_chat.id,
-            from_chat_id=product.backup_storage_group_id,
-            message_id=product.backup_message_id
-        )
-        await asyncio.sleep(0.2)
-        
+        if product.user_id == -1:
+            await context.bot.forward_message(
+                chat_id=update.effective_chat.id,
+                from_chat_id=product.backup_chat_id,
+                message_id=product.backup_message_id
+            )
+            await asyncio.sleep(0.2)
+
+
 
 handlers = [
     CommandHandler("admin_delete_category", start_delete_category),

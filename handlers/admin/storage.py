@@ -1,7 +1,7 @@
 from telegram.ext import *
 from telegram import *
 from config import Config
-from services.container import Container
+from database.manager.all_managers import *
 
 
 async def set_storage(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -23,10 +23,7 @@ async def set_storage(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
         bot_info = await context.bot.get_chat_member(chat_id, context.bot.id)  
         if bot_info.status == "administrator":
-            db = Container.db()
-            setting = db.get_setting()
-            setting.storage_group_id = chat_id
-            db.save_setting(setting)
+            await CommonManager.update_storage_chat_id(chat_id)
             await update.message.reply_text("✅ Tôi sẽ dùng nơi đây lưu trữ các file tdata hoặc các file liên quan!\n\n"
                                             "⚠️ Lưu ý bạn không nên tự ý xóa các file của tôi!")
         elif bot_info.status == "member":

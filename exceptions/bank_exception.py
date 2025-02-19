@@ -1,0 +1,2 @@
+class NotFoundBankError(Exception):
+    pass

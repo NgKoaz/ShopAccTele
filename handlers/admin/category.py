@@ -1,9 +1,9 @@
 from telegram.ext import *
 from telegram import *
 from config import Config
-from services.container import Container
 from bot.state_manager import StateManager
 from database.models.category import Category
+from database.manager.all_managers import *
 from bot.callback_data_manager import CallbackDataManager
 from bot.mode import Mode
 import json
@@ -69,26 +69,28 @@ async def get_category_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # Read and parse JSON file
             with open(file_path, "r", encoding="utf-8") as f:
-                json_data = json.load(f)
+                json_data = json.load(file_path)
 
-            category = Category(
-                id=Container.category_manager().generate_category_id(),
-                name=json_data["name"],
-                price=json_data["price"],
-                adding_instruction=json_data["adding_instruction"],
-                avai_products=0,
-                sold_products=0,
-                next_product_id=0
-            )
+            name = json_data["name"] 
+            price = json_data["price"]
+            adding_instruction = json_data["adding_instruction"]
+            if not(name and isinstance(name, str) and price and isinstance(price, int)):
+                raise Exception("File lỏ quá!")
 
-            # Save it into database
-            Container.category_manager().save_category(category_id=category.id, category=category)
+            # Create a new category
+            await CategoryManager.create_category(Category(
+                user_id=update.effective_user.id,
+                name=name,
+                price=price,
+                adding_instruction=adding_instruction,
+            ))
 
             await update.message.reply_text("Tạo xong! Bấm /start để check.")
-
             return ConversationHandler.END
         except json.JSONDecodeError:
             update.message.reply_text("Error: The file contains invalid JSON. Please check and try again.")
+        except Exception:
+            update.message.reply_text("File gửi quá lỏ")
         finally:
             # Cleanup: Delete the file after processing
             if os.path.exists(file_path):

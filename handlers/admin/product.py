@@ -1,11 +1,12 @@
 from telegram.ext import *
 from telegram import *
-from config import Config
-from services.container import Container
+from database.manager.all_managers import *
 from bot.state_manager import StateManager
 from bot.callback_data_manager import CallbackDataManager
 from database.models.product import Product
+from functools import partial
 from bot.mode import Mode
+from config import Config
 
 
 def set_add_product_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -30,10 +31,8 @@ async def start_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Check password
     password = args[0]
     if password == Config.TELEGRAM_ADMIN_PASSWORD:
-        db = Container.db()
-
         # Check store location
-        setting = db.get_setting()
+        setting = await CommonManager.get_setting()
         if not setting:
             await update.message.reply_text("❌ Hãy vào nhóm và dùng /set_storage <password> để thiết lập nơi lưu trữ!")
             return ConversationHandler.END
@@ -41,7 +40,7 @@ async def start_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         set_add_product_mode(update, context)
 
         # Construct keyboard
-        categories = Container.category_manager().get_categories()
+        categories = await CategoryManager.get_categories()
         keyboard = [[InlineKeyboardButton(category.name, callback_data=category.id)] for category in categories]
         await update.message.reply_text(
             "Hãy chọn loại sản phẩm muốn thêm!",
@@ -113,16 +112,15 @@ async def stop_receive_files(update: Update, context: ContextTypes.DEFAULT_TYPE)
 """ Global handler """
 """ With paterrn ^ADD_PRODUCT.* """
 async def accept_adding_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    db = Container.db()
-    setting = db.get_setting()
-    storage_group_id = setting.storage_group_id
+    setting = await CommonManager.get_setting()
+    storage_chat_id = setting.storage_chat_id
     
     query = update.callback_query
     await query.edit_message_reply_markup()
 
     # Forward to storage file group
     forwarded_message = await context.bot.forward_message(
-                                    chat_id=storage_group_id,  
+                                    chat_id=storage_chat_id,  
                                     from_chat_id=update.effective_chat.id,
                                     message_id=update.effective_message.id
                                 )
@@ -141,27 +139,20 @@ async def accept_adding_product(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return
     
-
-    product_manager = Container.product_manager()
-    category_manager = Container.category_manager()
-
-    product_id = product_manager.generate_product_id(category_id)
-    product = Product(
-        id=product_id,
-        user_id="",
-        backup_message_id=forwarded_message_id,
-        backup_storage_group_id=forwarded_chat_id
-    )
-    
-    product_manager.save_product(category_id, product)
-
-    # Count products in category
-    category = category_manager.get_category(category_id)
-    category.avai_products += 1
-    category_manager.save_category(category_id, category)
+    results = await CategoryManager.exec_transactions([
+        partial(
+            ProductManager.create_product, 
+            category_id=category_id,
+            original_chat_id=update.effective_chat.id,
+            original_message_id=update.effective_message.id,
+            backup_message_id=forwarded_message_id,
+            backup_chat_id=forwarded_chat_id
+        )
+    ])
+    product_id = results[0]
 
     keyboard=[[
-        InlineKeyboardButton(text="Bấm vào để xóa ra khỏi gian hàng", callback_data=f"{CallbackDataManager.DELETE_PRODUCT}|{category.id}|{product.id}")
+        InlineKeyboardButton(text="Bấm vào để xóa ra khỏi gian hàng", callback_data=f"{CallbackDataManager.DELETE_PRODUCT}|{category_id}|{product_id}")
     ]]
 
     query = update.callback_query
@@ -193,13 +184,15 @@ async def delete_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     category_id = parts[1]
     product_id = parts[2]
-    product_manager = Container.product_manager()
-    product = product_manager.get_product(category_id, product_id)
+    results = await ProductManager.exec_transactions([
+        partial(ProductManager.delete_product, category_id=category_id, product_id=product_id)
+    ])
+    product: Product | None = results[0]
+
     if product is None:
         await query.edit_message_text(text="Sản phẩm này đã được bán hoặc không tồn tại nữa!")
         return
     else:
-        product_manager.delete_product(category_id, product_id)
         await query.delete_message()
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
@@ -207,11 +200,10 @@ async def delete_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML"
         )
         await context.bot.delete_message(
-            chat_id=product.backup_storage_group_id,
+            chat_id=product.backup_chat_id,
             message_id=product.backup_message_id
         )
         return
-
 
 
 add_product_conversation_handler = ConversationHandler(

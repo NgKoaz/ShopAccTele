@@ -1,0 +1,2 @@
+class NotFoundSettingError(Exception):
+    pass

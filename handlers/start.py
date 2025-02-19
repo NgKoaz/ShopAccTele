@@ -1,9 +1,8 @@
 from telegram.ext import *
 from telegram import *
-from services.container import Container
 from bot.callback_data_manager import CallbackDataManager
+from database.manager.all_managers import *
 from bot.mode import Mode
-from firebase_admin import firestore
 
 
 def set_user_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -15,33 +14,27 @@ def is_add_product_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> b
 
 """ Auditted """
 async def _generate_keyboard_and_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Get services
-    user_manager = Container.user_manager()
-    category_manager = Container.category_manager()
-
     # Fetch user's balance and inventory information
-    user = user_manager.get_user(update.effective_user.id)
-    balance = user.balance
-
-    # Category for all services and products
-    categories = category_manager.get_categories()
+    user = await UserManager.get_user(update.effective_user.id)  
 
     keyboard = [
         [InlineKeyboardButton("Mua tài khoản", callback_data=CallbackDataManager.PURCHASE_FEATURE)],
         [InlineKeyboardButton("Nạp tiền", callback_data=CallbackDataManager.DEPOSIT_FEATURE)],
         [InlineKeyboardButton("Load lại", callback_data=CallbackDataManager.REFRESH)]
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+
     message=(
         "🎉 <b>Chào mừng bạn đến với shop</b> 🎉\n\n"
-        f"💰 <b>Số dư của bạn:</b> <code>{balance} VNĐ</code>\n"
+        f"💰 <b>Số dư của bạn:</b> <code>{user.balance} VNĐ</code>\n"
         f"📌 <b>Các dịch vụ cung cấp:</b>\n\n"
     )
+
+    categories = await CategoryManager.get_categories()
     for category in categories:
         message += f"<b>{category.name}:</b> <code>{category.avai_products}</code> | Giá: {category.price} VND\n"
     message += "\n\n📞 Liên hệ hỗ trợ nếu cần giúp đỡ!"
 
-    return [reply_markup, message]
+    return [InlineKeyboardMarkup(keyboard), message]
     
 
 async def _send_hint_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -91,19 +84,3 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reply_markup,
             parse_mode="HTML"
         )
-
-    await test_transaction()
-
-    
-async def test_transaction():
-    db = Container.db().get_firestore()
-    transaction = db.transaction()
-    city_ref = db.collection("cities").document("SF")
-
-    @firestore.async_transactional
-    async def update_in_transaction(transaction, city_ref):
-        snapshot = await city_ref.get(transaction=transaction)
-        transaction.update(city_ref, {"population": snapshot.get("population") + 1})
-
-    await update_in_transaction(transaction, city_ref)
- 

@@ -1,18 +1,16 @@
 from telegram.ext import *
 from telegram import *
-from services.container import Container
-from config import Config
 from bot.callback_data_manager import CallbackDataManager
+from database.manager.all_managers import *
 import handlers.start as start_handlers
+from config import Config
 
 
 async def _generate_chat_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    bank_name = Container.db().get_bank_name(Config.BIN_CODE)
+    bank_name = await CommonManager.get_bank_name(Config.BIN_CODE)
 
     keyboard = [
-        [
-            InlineKeyboardButton("Quay lại", callback_data=CallbackDataManager.TURN_BACK_START_FROM_DEPOSIT), 
-        ]
+        [InlineKeyboardButton("Quay lại", callback_data=CallbackDataManager.TURN_BACK_START_FROM_DEPOSIT)]
     ]
     
     message = (f"Hãy chuyển tiền vào:\n"

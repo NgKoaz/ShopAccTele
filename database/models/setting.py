@@ -3,9 +3,8 @@ from bson import ObjectId
 
 
 @dataclass
-class User:
+class Setting:
     _id: ObjectId = ObjectId()
-    id: int = 0
-    balance: int = 0
-    admin_password: str = ""
-    
+    password: str = "123"
+    storage_chat_id: int = 0
+    next_category_id: int = 0
